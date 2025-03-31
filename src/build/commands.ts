@@ -152,6 +152,12 @@ export async function runOniOSSimulator(
     writeWatchMarkers(terminal);
   }
 
+  // Start streaming logs before launching the app (non-blocking)
+  vscode.commands.executeCommand("sweetpad.simulators.streamLogs");
+  
+  // Small delay to ensure the logger is ready
+  await new Promise(resolve => setTimeout(resolve, 200));
+
   // Run app
   await terminal.execute({
     command: "xcrun",
