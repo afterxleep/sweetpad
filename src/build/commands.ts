@@ -23,6 +23,7 @@ import { showInputBox } from "../common/quick-pick";
 import { type Command, type TaskTerminal, runTask } from "../common/tasks";
 import { assertUnreachable } from "../common/types";
 import type { Destination, DestinationType } from "../destination/types";
+import { focusSimulatorLogs } from "../simulators/commands";
 import { getSimulatorByUdid } from "../simulators/utils";
 import { DEFAULT_BUILD_PROBLEM_MATCHERS } from "./constants";
 import {
@@ -173,6 +174,10 @@ export async function runOniOSSimulator(
     // should be prefixed with `SIMCTL_CHILD_` to pass to the child process
     env: Object.fromEntries(Object.entries(options.launchEnv).map(([key, value]) => [`SIMCTL_CHILD_${key}`, value])),
   });
+  
+  // Make sure logs are focused after app is launched
+  // Small delay to ensure the debugger has time to attach
+  setTimeout(() => focusSimulatorLogs(), 1000);
 }
 
 export async function runOniOSDevice(

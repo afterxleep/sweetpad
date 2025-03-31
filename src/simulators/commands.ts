@@ -13,6 +13,14 @@ const simulatorLogger = new Logger({ name: "Simulator" });
 let logsProcess: ReturnType<typeof spawn> | null = null;
 
 /**
+ * Focus the simulator logs output channel
+ * This can be called from anywhere to bring the simulator logs into focus
+ */
+export function focusSimulatorLogs() {
+  simulatorLogger.show();
+}
+
+/**
  * Stream simulator logs directly to the output channel without using task system
  */
 async function streamLogsToChannel(simulatorUdid: string): Promise<void> {
@@ -56,8 +64,6 @@ async function streamLogsToChannel(simulatorUdid: string): Promise<void> {
   
   // Unref the process so it doesn't prevent the parent from exiting
   logsProcess.unref();
-  
-  // Return immediately - no need to wait for the log process
 }
 
 /**
