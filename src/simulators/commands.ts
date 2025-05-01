@@ -42,11 +42,11 @@ export function focusSimulatorLogs() {
 }
 
 /**
- * Stream simulator logs directly to the output channel without using task system
- * @param simulatorUdid The UDID of the simulator
+ * Stream logs directly to the output channel without using task system
+ * @param destination The destination (simulator or device)
  * @param appName The app name to filter logs by
  */
-async function streamLogsToChannel(simulatorUdid: string, appName: string): Promise<void> {
+async function streamLogsToChannel(destination: { udid: string; type: string }, appName: string): Promise<void> {
   // Kill any existing log process
   if (logsProcess) {
     try {
@@ -77,22 +77,42 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
     simulatorLogger.log(`Log stream started for: ${debugDylibPattern}`);
   }
   
-  // Create the log command with no predicate - we'll filter in memory
-  const logArgs = [
-    'simctl', 
-    'spawn', 
-    'booted', 
-    'log', 
-    'stream', 
-    '--style', 
-    'syslog', 
-    '--color', 
-    'always', 
-    '--level', 
-    'debug'
-  ];
+  // Determine if this is a simulator or a physical device
+  const isSimulator = destination.type.includes('Simulator');
   
-  // Start the log process
+  let logArgs: string[];
+  
+  if (isSimulator) {
+    // Arguments for simulator log streaming
+    logArgs = [
+      'simctl', 
+      'spawn', 
+      'booted', 
+      'log', 
+      'stream', 
+      '--style', 
+      'syslog', 
+      '--color', 
+      'always', 
+      '--level', 
+      'debug'
+    ];
+  } else {
+    // Arguments for physical device log streaming
+    logArgs = [
+      'devicectl',
+      'device',
+      'syslog',
+      '--device',
+      destination.udid,
+      '--color',
+      'always',
+      '--level',
+      'debug'
+    ];
+  }
+  
+  // Start the log process with the appropriate command
   logsProcess = spawn('xcrun', logArgs, {
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe']
@@ -108,6 +128,9 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
   // Pattern to match app logs with the format:
   // (AppName.debug.dylib) [bundle.identifier:Category] Message
   const appLogPattern = new RegExp(`\\(${baseAppName}\\.debug\\.dylib\\)\\s+\\[(.*?)\\]\\s+(.*)`, 'i');
+  
+  // Alternative pattern for device logs which might have a different format
+  const deviceLogPattern = new RegExp(`${baseAppName}\\[\\d+\\].*?\\[(.*?)\\]\\s+(.*)`, 'i');
   
   // Map log levels to emoji icons
   const logLevelToEmoji: Record<string, string> = {
@@ -136,9 +159,18 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
         continue;
       }
       
-      // Only process actual app logs
-      const match = line.match(appLogPattern);
+      // Try matching with app log pattern first
+      let match = line.match(appLogPattern);
+      let matched = false;
+      
+      // If not matched and this is a device, try the device log pattern
+      if (!match && !isSimulator) {
+        match = line.match(deviceLogPattern);
+      }
+      
+      // Process if we have a match
       if (match && match.length >= 3) {
+        matched = true;
         const subsystemCategory = match[1];
         const message = match[2];
         
@@ -185,6 +217,18 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
           simulatorLogger.log(`${emoji}  [${category}]`);
           simulatorLogger.log(`${message}`);
           simulatorLogger.log('───────────────');
+        }
+      } 
+      // For device logs, if we still didn't match but the line contains our app name,
+      // show it with minimal formatting
+      else if (!isSimulator && !matched && line.includes(baseAppName)) {
+        if (outputChannel) {
+          // Simple cleaning: try to remove timestamp and device prefix
+          const cleanedLine = line.replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+[-+]\d{4}\s+\w+\s+/, '');
+          outputChannel.appendLine(`📱 ${cleanedLine}`);
+          outputChannel.appendLine('───────────────');
+        } else {
+          simulatorLogger.log(line);
         }
       }
     }
@@ -354,13 +398,13 @@ export async function removeSimulatorCacheCommand(execution: CommandExecution) {
 }
 
 /**
- * Command to stream logs for the launched app in the simulator
+ * Command to stream logs for the launched app in the simulator or device
  * This can be used from the command palette or programmatically
  */
 export async function streamSimulatorLogsCommand(execution: CommandExecution, item?: iOSSimulatorDestinationTreeItem) {
   const selectedDestination = execution.context.destinationsManager.getSelectedXcodeDestinationForBuild();
   if (!selectedDestination) {
-    throw new ExtensionError("No destination selected. Please select a simulator first.");
+    throw new ExtensionError("No destination selected. Please select a simulator or device first.");
   }
 
   const destinations = await execution.context.destinationsManager.getDestinations({
@@ -371,15 +415,22 @@ export async function streamSimulatorLogsCommand(execution: CommandExecution, it
     (d) => d.id === selectedDestination.id && d.type === selectedDestination.type
   );
 
-  if (!destination || !destination.type.includes("Simulator")) {
-    throw new ExtensionError("No simulator selected. Please select a simulator first.");
+  if (!destination) {
+    throw new ExtensionError("No destination selected. Please select a simulator or device first.");
   }
 
-  let simulatorUdid = "";
+  let destinationInfo = {
+    udid: "",
+    type: destination.type
+  };
+  
   if (item) {
-    simulatorUdid = item.simulator.udid;
+    destinationInfo.udid = item.simulator.udid;
+  } else if (destination.type.includes("Simulator")) {
+    destinationInfo.udid = (destination as SimulatorDestination).udid;
   } else {
-    simulatorUdid = (destination as SimulatorDestination).udid;
+    // For physical devices
+    destinationInfo.udid = destination.id;
   }
 
   // Get the last launched app context
@@ -397,10 +448,9 @@ export async function streamSimulatorLogsCommand(execution: CommandExecution, it
   try {
     // Extract the app name from the path, which we'll use for filtering
     const appName = extractAppName(appPath);
-    simulatorLogger.log(`Filtering logs for app: ${appName}`);
     
     // Stream logs for this specific app
-    await streamLogsToChannel(simulatorUdid, appName);
+    await streamLogsToChannel(destinationInfo, appName);
   } catch (error) {
     throw new ExtensionError(`Failed to start log streaming: ${error instanceof Error ? error.message : String(error)}`);
   }
