@@ -42,7 +42,7 @@ import {
   removeSimulatorCacheCommand,
   startSimulatorCommand,
   stopSimulatorCommand,
-  streamSimulatorLogsCommand,
+  streamLogsCommand,
 } from "./simulators/commands.js";
 import { SimulatorsManager } from "./simulators/manager.js";
 import {
@@ -184,7 +184,7 @@ export function activate(context: vscode.ExtensionContext) {
   d(command("sweetpad.simulators.removeCache", removeSimulatorCacheCommand));
   d(command("sweetpad.simulators.start", startSimulatorCommand));
   d(command("sweetpad.simulators.stop", stopSimulatorCommand));
-  d(command("sweetpad.simulators.streamLogs", streamSimulatorLogsCommand));
+  d(command("sweetpad.simulators.streamLogs", streamLogsCommand));
 
   // // Devices
   d(command("sweetpad.devices.refresh", async () => await destinationsManager.refreshDevices()));

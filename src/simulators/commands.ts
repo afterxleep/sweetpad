@@ -401,7 +401,7 @@ export async function removeSimulatorCacheCommand(execution: CommandExecution) {
  * Command to stream logs for the launched app in the simulator or device
  * This can be used from the command palette or programmatically
  */
-export async function streamSimulatorLogsCommand(execution: CommandExecution, item?: iOSSimulatorDestinationTreeItem) {
+export async function streamLogsCommand(execution: CommandExecution, item?: iOSSimulatorDestinationTreeItem) {
   const selectedDestination = execution.context.destinationsManager.getSelectedXcodeDestinationForBuild();
   if (!selectedDestination) {
     throw new ExtensionError("No destination selected. Please select a simulator or device first.");
