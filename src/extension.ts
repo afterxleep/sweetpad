@@ -1,10 +1,12 @@
 import * as vscode from "vscode";
 import {
+  buildApp,
   buildCommand,
   cleanCommand,
   diagnoseBuildSetupCommand,
   generateBuildServerConfigCommand,
   launchCommand,
+  debugCommand,
   openXcodeCommand,
   removeBundleDirCommand,
   resolveDependenciesCommand,
@@ -33,7 +35,7 @@ import { DestinationStatusBar } from "./destination/status-bar.js";
 import { DestinationsTreeProvider } from "./destination/tree.js";
 import { DevicesManager } from "./devices/manager.js";
 import { formatCommand, showLogsCommand } from "./format/commands.js";
-import { createFormatProvider } from "./format/provider.js";
+import { SwiftFormattingProvider, registerFormatProvider } from "./format/formatter.js";
 import { createFormatStatusItem } from "./format/status.js";
 import {
   openSimulatorCommand,
@@ -87,6 +89,8 @@ export function activate(context: vscode.ExtensionContext) {
   const toolsManager = new ToolsManager();
   const testingManager = new TestingManager();
 
+  const formatter = new SwiftFormattingProvider();
+
   // Main context object 🌍
   const _context = new ExtensionContext({
     context: context,
@@ -94,6 +98,7 @@ export function activate(context: vscode.ExtensionContext) {
     buildManager: buildManager,
     toolsManager: toolsManager,
     testingManager: testingManager,
+    formatter: formatter,
   });
   // Here is circular dependency, but I don't care
   buildManager.context = _context;
@@ -135,13 +140,14 @@ export function activate(context: vscode.ExtensionContext) {
   d(tree("sweetpad.build.view", buildTreeProvider));
   d(command("sweetpad.build.refreshView", async () => buildManager.refresh()));
   d(command("sweetpad.build.launch", launchCommand));
+  d(command("sweetpad.build.debug", debugCommand));
   d(command("sweetpad.build.run", runCommand));
   d(command("sweetpad.build.build", buildCommand));
   d(command("sweetpad.build.clean", cleanCommand));
   d(command("sweetpad.build.test", testCommand));
   d(command("sweetpad.build.resolveDependencies", resolveDependenciesCommand));
   d(command("sweetpad.build.removeBundleDir", removeBundleDirCommand));
-  d(command("sweetpad.build.genereateBuildServerConfig", generateBuildServerConfigCommand));
+  d(command("sweetpad.build.generateBuildServerConfig", generateBuildServerConfigCommand));
   d(command("sweetpad.build.openXcode", openXcodeCommand));
   d(command("sweetpad.build.selectXcodeWorkspace", selectXcodeWorkspaceCommand));
   d(command("sweetpad.build.setDefaultScheme", selectXcodeSchemeForBuildCommand));
@@ -168,7 +174,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Format
   d(createFormatStatusItem());
-  d(createFormatProvider());
+  d(registerFormatProvider(formatter));
   d(command("sweetpad.format.run", formatCommand));
   d(command("sweetpad.format.showLogs", showLogsCommand));
 
