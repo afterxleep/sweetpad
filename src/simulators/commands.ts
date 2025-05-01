@@ -12,6 +12,26 @@ import { exec } from "../common/exec.js";
 
 const simulatorLogger = new Logger({ name: "Simulator" });
 let logsProcess: ReturnType<typeof spawn> | null = null;
+let outputChannel: vscode.OutputChannel | null = null;
+
+/**
+ * Write log directly to output channel without the Logger formatting
+ * This bypasses the built-in formatting to provide cleaner output
+ */
+function writeToOutputChannel(text: string) {
+  if (!outputChannel) {
+    // Get the private outputChannel from the logger
+    // @ts-ignore - accessing private property
+    outputChannel = simulatorLogger.outputChannel;
+  }
+  
+  if (outputChannel) {
+    outputChannel.appendLine(text);
+  } else {
+    // Fallback to regular logger if we can't get the channel
+    simulatorLogger.log(text);
+  }
+}
 
 /**
  * Focus the simulator logs output channel
@@ -42,7 +62,22 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
   // Extract the base app name without extension
   const baseAppName = appName.replace(/\.app$/, '');
   const debugDylibPattern = `${baseAppName}.debug.dylib`;
-  simulatorLogger.log(`Filtering logs for: ${debugDylibPattern}`);
+  
+  // Clear any existing content and show initial messages
+  if (!outputChannel) {
+    // @ts-ignore - accessing private property
+    outputChannel = simulatorLogger.outputChannel;
+  }
+  
+  if (outputChannel) {
+    outputChannel.clear();
+    outputChannel.appendLine(`🔎 Filtering logs for: ${debugDylibPattern}`);
+    outputChannel.appendLine(`⏱️ Started: ${new Date().toLocaleTimeString()}`);
+    outputChannel.appendLine('───────────────────────────────────');
+  } else {
+    simulatorLogger.log(`Filtering logs for: ${debugDylibPattern}`);
+    simulatorLogger.log(`Log stream started - filtering for: ${debugDylibPattern}`);
+  }
   
   // Create the log command with no predicate - we'll filter in memory
   const logArgs = [
@@ -59,8 +94,6 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
     'debug'
   ];
   
-  simulatorLogger.log(`Log stream started - filtering for: ${debugDylibPattern}`);
-  
   // Start the log process
   logsProcess = spawn('xcrun', logArgs, {
     detached: true,
@@ -71,6 +104,20 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
   // This makes it more precise and avoids capturing unrelated logs
   const logPattern = new RegExp(`(?:loaded|from|by) .*?${baseAppName}\\.debug\\.dylib`, 'i');
   
+  // Regex to extract just the message content after all the metadata
+  // This matches the standard iOS log output format and extracts just the message part
+  const messageExtractor = /.*?\(.*?\.debug\.dylib\)\s+\[(.*?)\]\s+(.*)/;
+  
+  // Map log levels to emoji icons
+  const logLevelToEmoji: Record<string, string> = {
+    default: '📝',
+    info: 'ℹ️',
+    debug: '🪲',
+    error: '❌',
+    fault: '💥',
+    warning: '⚠️'
+  };
+  
   // Capture logs, filter them, and log only matching lines
   logsProcess.stdout?.on('data', (data) => {
     const lines = data.toString().split('\n');
@@ -79,22 +126,75 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
       if (logPattern.test(line) || 
           (line.toLowerCase().includes(debugDylibPattern.toLowerCase()) && 
            !line.includes('getpwuid_r did not find a match'))) {
-        simulatorLogger.log(line);
+        
+        // Extract and format the relevant parts of the log message
+        const match = line.match(messageExtractor);
+        if (match && match.length >= 3) {
+          // Get the subsystem:category parts and extract just the category
+          const subsystemCategory = match[1];
+          const category = subsystemCategory.split(':').pop() || 'Log';
+          const message = match[2];
+          
+          // Detect log level from the line text or category
+          let logLevel = 'default';
+          if (line.toLowerCase().includes(' error') || subsystemCategory.toLowerCase().includes('error')) {
+            logLevel = 'error';
+          } else if (line.toLowerCase().includes(' warn') || subsystemCategory.toLowerCase().includes('warn')) {
+            logLevel = 'warning';
+          } else if (line.toLowerCase().includes(' info') || subsystemCategory.toLowerCase().includes('info')) {
+            logLevel = 'info';
+          } else if (line.toLowerCase().includes(' debug') || subsystemCategory.toLowerCase().includes('debug')) {
+            logLevel = 'debug';
+          } else if (line.toLowerCase().includes(' fault') || subsystemCategory.toLowerCase().includes('fault')) {
+            logLevel = 'fault';
+          }
+          
+          const emoji = logLevelToEmoji[logLevel] || logLevelToEmoji.default;
+          
+          // Write directly to the output channel without timestamp and level
+          if (outputChannel) {
+            outputChannel.appendLine(`${emoji}  [${category}]`);
+            outputChannel.appendLine(`${message}`);
+            outputChannel.appendLine('───────────────');
+          } else {
+            simulatorLogger.log(`${emoji}  [${category}]`);
+            simulatorLogger.log(`${message}`);
+            simulatorLogger.log('───────────────');
+          }
+        } else {
+          if (outputChannel) {
+            outputChannel.appendLine(line);
+          } else {
+            simulatorLogger.log(line);
+          }
+        }
       }
     }
   });
   
   logsProcess.stderr?.on('data', (data) => {
-    simulatorLogger.error(data.toString());
+    if (outputChannel) {
+      outputChannel.appendLine(`❌ Error: ${data.toString()}`);
+    } else {
+      simulatorLogger.error(data.toString());
+    }
   });
   
   logsProcess.on('error', (error) => {
-    simulatorLogger.error(`Log streaming error: ${error.message}`);
+    if (outputChannel) {
+      outputChannel.appendLine(`❌ Log streaming error: ${error.message}`);
+    } else {
+      simulatorLogger.error(`Log streaming error: ${error.message}`);
+    }
   });
   
   logsProcess.on('close', (code) => {
     if (code !== 0 && code !== null) {
-      simulatorLogger.log(`Log streaming process exited with code ${code}`);
+      if (outputChannel) {
+        outputChannel.appendLine(`⚠️ Log streaming process exited with code ${code}`);
+      } else {
+        simulatorLogger.log(`Log streaming process exited with code ${code}`);
+      }
     }
     logsProcess = null;
   });
