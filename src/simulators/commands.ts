@@ -8,6 +8,7 @@ import type { SelectedDestination } from "../destination/types.js";
 import type { SimulatorDestination } from "../simulators/types.js";
 import { Logger } from "../common/logger.js";
 import { spawn } from "child_process";
+import { exec } from "../common/exec.js";
 
 const simulatorLogger = new Logger({ name: "Simulator" });
 let logsProcess: ReturnType<typeof spawn> | null = null;
@@ -22,8 +23,10 @@ export function focusSimulatorLogs() {
 
 /**
  * Stream simulator logs directly to the output channel without using task system
+ * @param simulatorUdid The UDID of the simulator
+ * @param appName The app name to filter logs by
  */
-async function streamLogsToChannel(simulatorUdid: string): Promise<void> {
+async function streamLogsToChannel(simulatorUdid: string, appName: string): Promise<void> {
   // Kill any existing log process
   if (logsProcess) {
     try {
@@ -36,15 +39,49 @@ async function streamLogsToChannel(simulatorUdid: string): Promise<void> {
   
   simulatorLogger.show();
   
-  // Start a new log streaming process with detached option so it runs independently
-  logsProcess = spawn('xcrun', ['simctl', 'spawn', 'booted', 'log', 'stream', '--level=debug'], {
-    detached: true, // Run in a separate process group
-    stdio: ['ignore', 'pipe', 'pipe'] // Redirect stdio so parent can exit
+  // Extract the base app name without extension
+  const baseAppName = appName.replace(/\.app$/, '');
+  const debugDylibPattern = `${baseAppName}.debug.dylib`;
+  simulatorLogger.log(`Filtering logs for: ${debugDylibPattern}`);
+  
+  // Create the log command with no predicate - we'll filter in memory
+  const logArgs = [
+    'simctl', 
+    'spawn', 
+    'booted', 
+    'log', 
+    'stream', 
+    '--style', 
+    'syslog', 
+    '--color', 
+    'always', 
+    '--level', 
+    'debug'
+  ];
+  
+  simulatorLogger.log(`Log stream started - filtering for: ${debugDylibPattern}`);
+  
+  // Start the log process
+  logsProcess = spawn('xcrun', logArgs, {
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe']
   });
   
-  // Capture logs but don't let this process keep the app from running
+  // Create a better filter regex that looks for library patterns in log output
+  // This makes it more precise and avoids capturing unrelated logs
+  const logPattern = new RegExp(`(?:loaded|from|by) .*?${baseAppName}\\.debug\\.dylib`, 'i');
+  
+  // Capture logs, filter them, and log only matching lines
   logsProcess.stdout?.on('data', (data) => {
-    simulatorLogger.log(data.toString());
+    const lines = data.toString().split('\n');
+    for (const line of lines) {
+      // Only output lines that likely contain useful information about our app
+      if (logPattern.test(line) || 
+          (line.toLowerCase().includes(debugDylibPattern.toLowerCase()) && 
+           !line.includes('getpwuid_r did not find a match'))) {
+        simulatorLogger.log(line);
+      }
+    }
   });
   
   logsProcess.stderr?.on('data', (data) => {
@@ -64,6 +101,22 @@ async function streamLogsToChannel(simulatorUdid: string): Promise<void> {
   
   // Unref the process so it doesn't prevent the parent from exiting
   logsProcess.unref();
+}
+
+/**
+ * Extracts the app name from path
+ * @param appPath Path to the .app bundle
+ * @returns App name including .app extension
+ */
+function extractAppName(appPath: string): string {
+  const appNameMatch = appPath.match(/\/([^\/]+\.app)\/?$/);
+  if (appNameMatch && appNameMatch[1]) {
+    return appNameMatch[1];
+  }
+  // If we can't extract the name with regex, get the last part of the path
+  const parts = appPath.split('/');
+  const lastPart = parts[parts.length - 1];
+  return lastPart.endsWith('.app') ? lastPart : `${lastPart}.app`;
 }
 
 /**
@@ -170,34 +223,54 @@ export async function removeSimulatorCacheCommand(execution: CommandExecution) {
 }
 
 /**
- * Command to stream simulator logs to a dedicated output channel
+ * Command to stream logs for the launched app in the simulator
  * This can be used from the command palette or programmatically
  */
 export async function streamSimulatorLogsCommand(execution: CommandExecution, item?: iOSSimulatorDestinationTreeItem) {
-  let simulatorUdid: string;
+  const selectedDestination = execution.context.destinationsManager.getSelectedXcodeDestinationForBuild();
+  if (!selectedDestination) {
+    throw new ExtensionError("No destination selected. Please select a simulator first.");
+  }
+
+  const destinations = await execution.context.destinationsManager.getDestinations({
+    mostUsedSort: true,
+  });
+
+  const destination = destinations.find(
+    (d) => d.id === selectedDestination.id && d.type === selectedDestination.type
+  );
+
+  if (!destination || !destination.type.includes("Simulator")) {
+    throw new ExtensionError("No simulator selected. Please select a simulator first.");
+  }
+
+  let simulatorUdid = "";
   if (item) {
     simulatorUdid = item.simulator.udid;
   } else {
-    const selectedDestination = execution.context.destinationsManager.getSelectedXcodeDestinationForBuild();
-    if (!selectedDestination) {
-      throw new ExtensionError("No destination selected. Please select a simulator first.");
-    }
-
-    const destinations = await execution.context.destinationsManager.getDestinations({
-      mostUsedSort: true,
-    });
-
-    const destination = destinations.find(
-      (d) => d.id === selectedDestination.id && d.type === selectedDestination.type
-    );
-
-    if (!destination || !destination.type.includes("Simulator")) {
-      throw new ExtensionError("No simulator selected. Please select a simulator first.");
-    }
-
     simulatorUdid = (destination as SimulatorDestination).udid;
   }
 
-  // Stream logs directly instead of using the task system
-  await streamLogsToChannel(simulatorUdid);
+  // Get the last launched app context
+  const launchContext = execution.context.getWorkspaceState("build.lastLaunchedApp");
+  if (!launchContext) {
+    throw new ExtensionError("No app has been launched yet. Please launch an app first.");
+  }
+  
+  // Get the app path
+  const appPath = launchContext.appPath;
+  if (!appPath) {
+    throw new ExtensionError("Could not determine app path from the launched app.");
+  }
+  
+  try {
+    // Extract the app name from the path, which we'll use for filtering
+    const appName = extractAppName(appPath);
+    simulatorLogger.log(`Filtering logs for app: ${appName}`);
+    
+    // Stream logs for this specific app
+    await streamLogsToChannel(simulatorUdid, appName);
+  } catch (error) {
+    throw new ExtensionError(`Failed to start log streaming: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }

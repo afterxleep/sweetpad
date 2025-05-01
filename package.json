@@ -457,6 +457,11 @@
         "icon": "$(debug-stop)"
       },
       {
+        "command": "sweetpad.simulators.streamLogs",
+        "title": "SweetPad: Stream launched app logs",
+        "icon": "$(filter)"
+      },
+      {
         "command": "sweetpad.devices.refresh",
         "title": "SweetPad: Refresh devices list",
         "icon": "$(sweetpad-refresh)"
@@ -617,6 +622,11 @@
           "command": "sweetpad.simulators.stop",
           "when": "view == sweetpad.destinations.view && viewItem =~ /destination-item-simulator.*&status=booted.*/",
           "group": "inline@2"
+        },
+        {
+          "command": "sweetpad.simulators.streamLogs",
+          "when": "view == sweetpad.destinations.view && viewItem =~ /destination-item-simulator.*&status=booted.*/",
+          "group": "inline@3"
         },
         {
           "command": "sweetpad.destinations.select",
