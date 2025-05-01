@@ -73,6 +73,7 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
     outputChannel.clear();
     outputChannel.appendLine(`🔎 Filtering logs for: ${debugDylibPattern}`);
     outputChannel.appendLine(`⏱️ Started: ${new Date().toLocaleTimeString()}`);
+    outputChannel.appendLine(`📋 Now showing UNFILTERED logs - Please copy these and share to improve filtering`);
     outputChannel.appendLine('───────────────────────────────────');
   } else {
     simulatorLogger.log(`Filtering logs for: ${debugDylibPattern}`);
@@ -100,6 +101,9 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
     stdio: ['ignore', 'pipe', 'pipe']
   });
   
+  // Pattern to identify system initialization logs we want to ignore
+  const systemLogPattern = /\[\s*com\.apple\.Previews\.StubExecutor:PreviewsAgentExecutorLibrary\s*\]/i;
+  
   // Create a better filter regex that looks for library patterns in log output
   // This makes it more precise and avoids capturing unrelated logs
   const logPattern = new RegExp(`(?:loaded|from|by) .*?${baseAppName}\\.debug\\.dylib`, 'i');
@@ -118,10 +122,33 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
     warning: '⚠️'
   };
   
+  // Words that indicate specific log levels in the message content
+  const errorKeywords = ['fail', 'error', 'exception', 'crash', 'invalid', 'unable', 'not found'];
+  const warningKeywords = ['warn', 'deprecat', 'unresponsive', 'elevated', 'excessive', 'timeout', 'slow'];
+  const infoKeywords = ['start', 'complete', 'finish', 'initialize', 'load', 'appear', 'success'];
+  const debugKeywords = ['debug', 'trace', 'verbose'];
+  
+  // Display mode - whether to show all logs or just app logs
+  const debugMode = true; // Set to true to show all logs
+  
   // Capture logs, filter them, and log only matching lines
   logsProcess.stdout?.on('data', (data) => {
     const lines = data.toString().split('\n');
     for (const line of lines) {
+      // Skip empty lines
+      if (!line.trim()) continue;
+      
+      // In debug mode, show all logs containing the debug dylib
+      if (debugMode && line.includes(debugDylibPattern) && outputChannel) {
+        // Show the original full log line for analysis
+        outputChannel.appendLine(`FULL LOG: ${line}`);
+      }
+      
+      // Skip system initialization logs that mention the debug.dylib
+      if (systemLogPattern.test(line) && line.includes(debugDylibPattern)) {
+        continue;
+      }
+      
       // Only output lines that likely contain useful information about our app
       if (logPattern.test(line) || 
           (line.toLowerCase().includes(debugDylibPattern.toLowerCase()) && 
@@ -135,18 +162,34 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
           const category = subsystemCategory.split(':').pop() || 'Log';
           const message = match[2];
           
-          // Detect log level from the line text or category
-          let logLevel = 'default';
-          if (line.toLowerCase().includes(' error') || subsystemCategory.toLowerCase().includes('error')) {
+          // Check message content to better detect log level
+          const lowerMessage = message.toLowerCase();
+          
+          // Start with default log level
+          let logLevel = 'info'; // Default to info instead of 'default'
+          
+          // Check for error keywords
+          if (errorKeywords.some(keyword => lowerMessage.includes(keyword))) {
             logLevel = 'error';
-          } else if (line.toLowerCase().includes(' warn') || subsystemCategory.toLowerCase().includes('warn')) {
+          } 
+          // Check for warning keywords
+          else if (warningKeywords.some(keyword => lowerMessage.includes(keyword))) {
             logLevel = 'warning';
-          } else if (line.toLowerCase().includes(' info') || subsystemCategory.toLowerCase().includes('info')) {
-            logLevel = 'info';
-          } else if (line.toLowerCase().includes(' debug') || subsystemCategory.toLowerCase().includes('debug')) {
+          }
+          // Check for debug keywords
+          else if (debugKeywords.some(keyword => lowerMessage.includes(keyword))) {
             logLevel = 'debug';
-          } else if (line.toLowerCase().includes(' fault') || subsystemCategory.toLowerCase().includes('fault')) {
-            logLevel = 'fault';
+          }
+          // If no specific keywords, it remains as info
+          
+          // Override based on category if it contains specific level indicators
+          const lowerCategory = subsystemCategory.toLowerCase();
+          if (lowerCategory.includes('error')) {
+            logLevel = 'error';
+          } else if (lowerCategory.includes('warn')) {
+            logLevel = 'warning';
+          } else if (lowerCategory.includes('debug')) {
+            logLevel = 'debug';
           }
           
           const emoji = logLevelToEmoji[logLevel] || logLevelToEmoji.default;
@@ -162,10 +205,13 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
             simulatorLogger.log('───────────────');
           }
         } else {
-          if (outputChannel) {
-            outputChannel.appendLine(line);
-          } else {
-            simulatorLogger.log(line);
+          // Only pass through non-system logs that don't match our extractor pattern
+          if (!systemLogPattern.test(line)) {
+            if (outputChannel) {
+              outputChannel.appendLine(line);
+            } else {
+              simulatorLogger.log(line);
+            }
           }
         }
       }
