@@ -10,7 +10,7 @@ import { Logger } from "../common/logger.js";
 import { spawn } from "child_process";
 import { exec } from "../common/exec.js";
 
-const simulatorLogger = new Logger({ name: "Simulator" });
+const OSLogger = new Logger({ name: "OSLog" });
 let logsProcess: ReturnType<typeof spawn> | null = null;
 let outputChannel: vscode.OutputChannel | null = null;
 
@@ -22,14 +22,14 @@ function writeToOutputChannel(text: string) {
   if (!outputChannel) {
     // Get the private outputChannel from the logger
     // @ts-ignore - accessing private property
-    outputChannel = simulatorLogger.outputChannel;
+    outputChannel = OSLogger.outputChannel;
   }
   
   if (outputChannel) {
     outputChannel.appendLine(text);
   } else {
     // Fallback to regular logger if we can't get the channel
-    simulatorLogger.log(text);
+    OSLogger.log(text);
   }
 }
 
@@ -38,7 +38,7 @@ function writeToOutputChannel(text: string) {
  * This can be called from anywhere to bring the simulator logs into focus
  */
 export function focusSimulatorLogs() {
-  simulatorLogger.show();
+  OSLogger.show();
 }
 
 /**
@@ -57,7 +57,7 @@ async function streamLogsToChannel(destination: { udid: string; type: string }, 
     logsProcess = null;
   }
   
-  simulatorLogger.show();
+  OSLogger.show();
   
   // Extract the base app name without extension
   const baseAppName = appName.replace(/\.app$/, '');
@@ -66,7 +66,7 @@ async function streamLogsToChannel(destination: { udid: string; type: string }, 
   // Clear any existing content and show initial messages
   if (!outputChannel) {
     // @ts-ignore - accessing private property
-    outputChannel = simulatorLogger.outputChannel;
+    outputChannel = OSLogger.outputChannel;
   }
   
   if (outputChannel) {
@@ -74,7 +74,7 @@ async function streamLogsToChannel(destination: { udid: string; type: string }, 
     outputChannel.appendLine(`⏱️ Started: ${new Date().toLocaleTimeString()}`);
     outputChannel.appendLine('───────────────────────────────────');
   } else {
-    simulatorLogger.log(`Log stream started for: ${debugDylibPattern}`);
+    OSLogger.log(`Log stream started for: ${debugDylibPattern}`);
   }
   
   // Determine if this is a simulator or a physical device
@@ -214,9 +214,9 @@ async function streamLogsToChannel(destination: { udid: string; type: string }, 
           outputChannel.appendLine(`${message}`);
           outputChannel.appendLine('───────────────');
         } else {
-          simulatorLogger.log(`${emoji}  [${category}]`);
-          simulatorLogger.log(`${message}`);
-          simulatorLogger.log('───────────────');
+          OSLogger.log(`${emoji}  [${category}]`);
+          OSLogger.log(`${message}`);
+          OSLogger.log('───────────────');
         }
       } 
       // For device logs, if we still didn't match but the line contains our app name,
@@ -228,7 +228,7 @@ async function streamLogsToChannel(destination: { udid: string; type: string }, 
           outputChannel.appendLine(`📱 ${cleanedLine}`);
           outputChannel.appendLine('───────────────');
         } else {
-          simulatorLogger.log(line);
+          OSLogger.log(line);
         }
       }
     }
@@ -250,7 +250,7 @@ async function streamLogsToChannel(destination: { udid: string; type: string }, 
       if (outputChannel) {
         outputChannel.appendLine(`❌ Error: ${errorText}`);
       } else {
-        simulatorLogger.error(errorText);
+        OSLogger.error(errorText);
       }
     }
   });
@@ -259,7 +259,7 @@ async function streamLogsToChannel(destination: { udid: string; type: string }, 
     if (outputChannel) {
       outputChannel.appendLine(`❌ Log streaming error: ${error.message}`);
     } else {
-      simulatorLogger.error(`Log streaming error: ${error.message}`);
+      OSLogger.error(`Log streaming error: ${error.message}`);
     }
   });
   
@@ -268,7 +268,7 @@ async function streamLogsToChannel(destination: { udid: string; type: string }, 
       if (outputChannel) {
         outputChannel.appendLine(`⚠️ Log streaming process exited with code ${code}`);
       } else {
-        simulatorLogger.log(`Log streaming process exited with code ${code}`);
+        OSLogger.log(`Log streaming process exited with code ${code}`);
       }
     }
     logsProcess = null;
