@@ -70,10 +70,8 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
   }
   
   if (outputChannel) {
-    outputChannel.clear();
-    outputChannel.appendLine(`🔎 Filtering logs for: ${debugDylibPattern}`);
+    outputChannel.clear();    
     outputChannel.appendLine(`⏱️ Started: ${new Date().toLocaleTimeString()}`);
-    outputChannel.appendLine(`📋 Now showing UNFILTERED logs - Please copy these and share to improve filtering`);
     outputChannel.appendLine('───────────────────────────────────');
   } else {
     simulatorLogger.log(`Filtering logs for: ${debugDylibPattern}`);
@@ -101,16 +99,16 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
     stdio: ['ignore', 'pipe', 'pipe']
   });
   
-  // Pattern to identify system initialization logs we want to ignore
-  const systemLogPattern = /\[\s*com\.apple\.Previews\.StubExecutor:PreviewsAgentExecutorLibrary\s*\]/i;
+  // Patterns to identify system logs we want to ignore
+  const appleSystemPatterns = [
+    /\[com\.apple\.Previews\.StubExecutor:PreviewsAgentExecutorLibrary\]/i,
+    /Found debug dylib/i,
+    /Opening debug dylib/i
+  ];
   
-  // Create a better filter regex that looks for library patterns in log output
-  // This makes it more precise and avoids capturing unrelated logs
-  const logPattern = new RegExp(`(?:loaded|from|by) .*?${baseAppName}\\.debug\\.dylib`, 'i');
-  
-  // Regex to extract just the message content after all the metadata
-  // This matches the standard iOS log output format and extracts just the message part
-  const messageExtractor = /.*?\(.*?\.debug\.dylib\)\s+\[(.*?)\]\s+(.*)/;
+  // Pattern to match app logs with the format:
+  // (AppName.debug.dylib) [bundle.identifier:Category] Message
+  const appLogPattern = new RegExp(`\\(${baseAppName}\\.debug\\.dylib\\)\\s+\\[(.*?)\\]\\s+(.*)`, 'i');
   
   // Map log levels to emoji icons
   const logLevelToEmoji: Record<string, string> = {
@@ -125,11 +123,10 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
   // Words that indicate specific log levels in the message content
   const errorKeywords = ['fail', 'error', 'exception', 'crash', 'invalid', 'unable', 'not found'];
   const warningKeywords = ['warn', 'deprecat', 'unresponsive', 'elevated', 'excessive', 'timeout', 'slow'];
-  const infoKeywords = ['start', 'complete', 'finish', 'initialize', 'load', 'appear', 'success'];
   const debugKeywords = ['debug', 'trace', 'verbose'];
   
   // Display mode - whether to show all logs or just app logs
-  const debugMode = true; // Set to true to show all logs
+  const debugMode = false; // Set to false to only show formatted app logs
   
   // Capture logs, filter them, and log only matching lines
   logsProcess.stdout?.on('data', (data) => {
@@ -138,81 +135,65 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
       // Skip empty lines
       if (!line.trim()) continue;
       
-      // In debug mode, show all logs containing the debug dylib
+      // In debug mode, show raw logs containing the debug dylib
       if (debugMode && line.includes(debugDylibPattern) && outputChannel) {
-        // Show the original full log line for analysis
         outputChannel.appendLine(`FULL LOG: ${line}`);
       }
       
-      // Skip system initialization logs that mention the debug.dylib
-      if (systemLogPattern.test(line) && line.includes(debugDylibPattern)) {
+      // Skip Apple system logs
+      if (appleSystemPatterns.some(pattern => pattern.test(line))) {
         continue;
       }
       
-      // Only output lines that likely contain useful information about our app
-      if (logPattern.test(line) || 
-          (line.toLowerCase().includes(debugDylibPattern.toLowerCase()) && 
-           !line.includes('getpwuid_r did not find a match'))) {
+      // Only process actual app logs
+      const match = line.match(appLogPattern);
+      if (match && match.length >= 3) {
+        const subsystemCategory = match[1];
+        const message = match[2];
         
-        // Extract and format the relevant parts of the log message
-        const match = line.match(messageExtractor);
-        if (match && match.length >= 3) {
-          // Get the subsystem:category parts and extract just the category
-          const subsystemCategory = match[1];
-          const category = subsystemCategory.split(':').pop() || 'Log';
-          const message = match[2];
-          
-          // Check message content to better detect log level
-          const lowerMessage = message.toLowerCase();
-          
-          // Start with default log level
-          let logLevel = 'info'; // Default to info instead of 'default'
-          
-          // Check for error keywords
-          if (errorKeywords.some(keyword => lowerMessage.includes(keyword))) {
-            logLevel = 'error';
-          } 
-          // Check for warning keywords
-          else if (warningKeywords.some(keyword => lowerMessage.includes(keyword))) {
-            logLevel = 'warning';
-          }
-          // Check for debug keywords
-          else if (debugKeywords.some(keyword => lowerMessage.includes(keyword))) {
-            logLevel = 'debug';
-          }
-          // If no specific keywords, it remains as info
-          
-          // Override based on category if it contains specific level indicators
-          const lowerCategory = subsystemCategory.toLowerCase();
-          if (lowerCategory.includes('error')) {
-            logLevel = 'error';
-          } else if (lowerCategory.includes('warn')) {
-            logLevel = 'warning';
-          } else if (lowerCategory.includes('debug')) {
-            logLevel = 'debug';
-          }
-          
-          const emoji = logLevelToEmoji[logLevel] || logLevelToEmoji.default;
-          
-          // Write directly to the output channel without timestamp and level
-          if (outputChannel) {
-            outputChannel.appendLine(`${emoji}  [${category}]`);
-            outputChannel.appendLine(`${message}`);
-            outputChannel.appendLine('───────────────');
-          } else {
-            simulatorLogger.log(`${emoji}  [${category}]`);
-            simulatorLogger.log(`${message}`);
-            simulatorLogger.log('───────────────');
-          }
+        // Extract just the category part (after the colon)
+        const category = subsystemCategory.split(':').pop() || 'Log';
+        
+        // Check message content to better detect log level
+        const lowerMessage = message.toLowerCase();
+        
+        // Start with default log level
+        let logLevel = 'info'; // Default to info 
+        
+        // Check for error keywords
+        if (errorKeywords.some(keyword => lowerMessage.includes(keyword))) {
+          logLevel = 'error';
+        } 
+        // Check for warning keywords
+        else if (warningKeywords.some(keyword => lowerMessage.includes(keyword))) {
+          logLevel = 'warning';
+        }
+        // Check for debug keywords
+        else if (debugKeywords.some(keyword => lowerMessage.includes(keyword))) {
+          logLevel = 'debug';
+        }
+        
+        // Override based on category if it contains specific level indicators
+        const lowerCategory = category.toLowerCase();
+        if (lowerCategory.includes('error')) {
+          logLevel = 'error';
+        } else if (lowerCategory.includes('warn')) {
+          logLevel = 'warning';
+        } else if (lowerCategory.includes('debug')) {
+          logLevel = 'debug';
+        }
+        
+        const emoji = logLevelToEmoji[logLevel] || logLevelToEmoji.default;
+        
+        // Write directly to the output channel without timestamp and level
+        if (outputChannel) {
+          outputChannel.appendLine(`${emoji}  [${category}]`);
+          outputChannel.appendLine(`${message}`);
+          outputChannel.appendLine('───────────────');
         } else {
-          // Only pass through non-system logs that don't match our extractor pattern
-          if (!systemLogPattern.test(line)) {
-            if (outputChannel) {
-              outputChannel.appendLine(line);
-            } else {
-              simulatorLogger.log(line);
-            }
-          }
+          simulatorLogger.log(`${emoji}  [${category}]`);
+          simulatorLogger.log(`${message}`);
+          simulatorLogger.log('───────────────');
         }
       }
     }
