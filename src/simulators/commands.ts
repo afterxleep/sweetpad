@@ -172,11 +172,24 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
     }
   });
   
+  // List of system messages to ignore
+  const ignoredSystemMessages = [
+    'getpwuid_r did not find a match',
+    'Could not get register values'
+  ];
+  
   logsProcess.stderr?.on('data', (data) => {
-    if (outputChannel) {
-      outputChannel.appendLine(`❌ Error: ${data.toString()}`);
-    } else {
-      simulatorLogger.error(data.toString());
+    const errorText = data.toString();
+    
+    // Check if this is a known harmless system message we should ignore
+    const shouldIgnore = ignoredSystemMessages.some(msg => errorText.includes(msg));
+    
+    if (!shouldIgnore) {
+      if (outputChannel) {
+        outputChannel.appendLine(`❌ Error: ${errorText}`);
+      } else {
+        simulatorLogger.error(errorText);
+      }
     }
   });
   
