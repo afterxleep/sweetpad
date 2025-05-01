@@ -70,12 +70,11 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
   }
   
   if (outputChannel) {
-    outputChannel.clear();    
+    outputChannel.clear();
     outputChannel.appendLine(`⏱️ Started: ${new Date().toLocaleTimeString()}`);
     outputChannel.appendLine('───────────────────────────────────');
   } else {
-    simulatorLogger.log(`Filtering logs for: ${debugDylibPattern}`);
-    simulatorLogger.log(`Log stream started - filtering for: ${debugDylibPattern}`);
+    simulatorLogger.log(`Log stream started for: ${debugDylibPattern}`);
   }
   
   // Create the log command with no predicate - we'll filter in memory
@@ -125,20 +124,12 @@ async function streamLogsToChannel(simulatorUdid: string, appName: string): Prom
   const warningKeywords = ['warn', 'deprecat', 'unresponsive', 'elevated', 'excessive', 'timeout', 'slow'];
   const debugKeywords = ['debug', 'trace', 'verbose'];
   
-  // Display mode - whether to show all logs or just app logs
-  const debugMode = false; // Set to false to only show formatted app logs
-  
   // Capture logs, filter them, and log only matching lines
   logsProcess.stdout?.on('data', (data) => {
     const lines = data.toString().split('\n');
     for (const line of lines) {
       // Skip empty lines
       if (!line.trim()) continue;
-      
-      // In debug mode, show raw logs containing the debug dylib
-      if (debugMode && line.includes(debugDylibPattern) && outputChannel) {
-        outputChannel.appendLine(`FULL LOG: ${line}`);
-      }
       
       // Skip Apple system logs
       if (appleSystemPatterns.some(pattern => pattern.test(line))) {
